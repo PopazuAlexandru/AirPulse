@@ -41,21 +41,34 @@ The default endpoints are:
 
 Use a 30-pin ESP32 Dev Board on the breadboard with the USB-C connector facing
 up. Mount the board across columns B–J and rows 3–17. Bridge the left and right
-blue ground rails with a black jumper on row 29 to provide common ground.
+blue ground rails with a black jumper on row 29 to provide common ground. The
+PMS5003 and MH-Z19C connect through solderless plug-and-play adapters; do not
+cut or strip their sensor cables.
 
-| Component | Component Pin / Wire | ESP32 GPIO / Bus | Breadboard Connection (Row 1 at Top) |
+| Component / Adapter | Adapter or Component Pin | ESP32 GPIO / Bus | Breadboard Connection (Row 1 at Top) |
 | :--- | :--- | :--- | :--- |
 | **ESP32 (Right – 5V)** | `VIN` / `GND` | Power Input | `J3` -> Right `+` rail (5V) / `J4` -> Right `-` rail (GND) |
 | **ESP32 (Left – 3.3V)** | `3V3` / `GND` | 3.3V Output | `A3` -> Left `+` rail (3.3V) / `A4` -> Left `-` rail (GND) |
 | **Common Ground** | Left & Right `-` Rails | GND | Black jumper on **Row 29** bridging both blue `-` rails |
-| **MH-Z19C (CO2)** | `Vin` / `GND` | 5V Power | Right `+` rail (5V) / `-` GND rail |
-| **MH-Z19C (CO2)** | `TX` / `RX` | `UART2` (`GPIO 16` / `GPIO 17`) | `TX` -> `A8` (`RX2`) / `RX` -> `A9` (`TX2`) |
-| **PMS5003 (PM2.5/10)** | `Pin 1 (Red - VCC)` / `Pin 2 (Black - GND)` | 5V Power | Right `+` rail (5V) / `-` GND rail |
-| **PMS5003 (PM2.5/10)** | `Pin 4 (Black - RXD)` / `Pin 5 (Red - TXD)` | `UART1` (`GPIO 19` / `GPIO 18`) | `RXD` -> `A12` (`D19`) / `TXD` -> `A11` (`D18`) |
+| **PMS5003** via **1.25mm-to-2.54mm Breakout Adapter Board** | `VCC` / `GND` | 5V Power | `VCC` -> Right `+` rail (5V) / `GND` -> `-` GND rail |
+| **PMS5003** via **1.25mm-to-2.54mm Breakout Adapter Board** | `RXD` / `TXD` | `UART1` (`GPIO 19` / `GPIO 18`) | `RXD` -> `GPIO 19` (`D19`) / `TXD` -> `GPIO 18` (`D18`); leave `SET` and `RST` unconnected |
+| **MH-Z19C (CO2)** via **7-pin JST 1.25mm to 2.54mm DuPont Adapter Cable** | `Vin` / `GND` | 5V Power | `Vin` -> Right `+` rail (5V) / `GND` -> `-` GND rail |
+| **MH-Z19C (CO2)** via **7-pin JST 1.25mm to 2.54mm DuPont Adapter Cable** | `TX` / `RX` | `UART2` (`GPIO 16` / `GPIO 17`) | `TX` -> `GPIO 16` (`RX2`) / `RX` -> `GPIO 17` (`TX2`); remaining 3 adapter pins unused |
 | **Sensirion SHT35** | `VCC` / `GND` | 3.3V Power | Left `+` rail (3.3V) / `-` GND rail |
-| **Sensirion SHT35** | `SDA` / `SCL` | `I2C` (`GPIO 21` / `GPIO 22`, `0x44`) | `SDA` -> **Row 22** (`A13`/`D21`) / `SCL` -> **Row 23** (`A16`/`D22`) |
+| **Sensirion SHT35** | `SDA` / `SCL` | Shared `I2C` (`GPIO 21` / `GPIO 22`, address `0x44`) | `SDA` -> **Row 22** (`A13`/`D21`) / `SCL` -> **Row 23** (`A16`/`D22`) |
 | **0.96" SSD1306 OLED** | `VCC` / `GND` | 3.3V Power | Left `+` rail (3.3V) / `-` GND rail |
-| **0.96" SSD1306 OLED** | `SDA` / `SCL` | `I2C` (`GPIO 21` / `GPIO 22`, `0x3C`) | `SDA` -> **Row 22** (`A13`/`D21`) / `SCL` -> **Row 23** (`A16`/`D22`) |
+| **0.96" SSD1306 OLED** | `SDA` / `SCL` | Shared `I2C` (`GPIO 21` / `GPIO 22`, address `0x3C`) | `SDA` -> **Row 22** (`A13`/`D21`) / `SCL` -> **Row 23** (`A16`/`D22`) |
+
+### Bill of Materials
+
+- 30-pin ESP32 Dev Board (`esp32dev`)
+- Plantower PMS5003 particulate-matter sensor
+- PMS5003 1.25mm-to-2.54mm breakout adapter board
+- MH-Z19C CO2 sensor
+- 7-pin JST 1.25mm to 2.54mm DuPont adapter cable
+- Sensirion SHT35 temperature/humidity sensor
+- 0.96" SSD1306 OLED display
+- Breadboard, jumper wires, and USB-C cable
 
 ## 2. Flash the ESP32 firmware
 
@@ -73,7 +86,7 @@ On first boot, connect to the `AirPulse-Setup` Wi-Fi portal. Configure
 `api_token` to the same value as `API_TOKEN` used by Compose. Use the Docker
 host's LAN IP, not `localhost` or the Compose-only hostname `ai-service`.
 
-The firmware project and exact sensor wiring are documented in
+The firmware project setup is documented in
 [firmware/README.md](./firmware/README.md).
 
 ## 3. Send a test telemetry sample
