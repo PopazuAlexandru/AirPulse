@@ -1,0 +1,16 @@
+# Local environment secrets
+.env
+
+# PlatformIO / VS Code build artifacts
+firmware/.pio/
+firmware/.vscode/
+.pio/
+.vscode/
+
+# Python cache & test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+backend/ai_service/artifacts/
