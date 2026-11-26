@@ -36,7 +36,7 @@ class TelemetryClient {
     return payload;
   }
 
-  bool post(const String& payload, AiStatus& aiStatus) const {
+  bool post(const String& payload, AiStatus& responseStatus) const {
     if (serverUrl_.length() == 0 || apiToken_.length() == 0) {
       Serial.println("[http] Server URL or API token is empty");
       return false;
@@ -60,7 +60,7 @@ class TelemetryClient {
 
     const String response = http.getString();
     http.end();
-    updateAiStatus(response, aiStatus);
+    updateAiStatus(response, responseStatus);
     Serial.printf("[http] Telemetry accepted, status=%d\n", statusCode);
     return true;
   }

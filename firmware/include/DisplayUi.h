@@ -24,19 +24,23 @@ class DisplayUi {
   }
 
   void render(const SensorReadings& readings, bool wifiConnected, int wifiRssi,
-              const AiStatus& aiStatus) {
+              const AiStatus& aiStatus, bool sensorOffline) {
     if (!ready_) {
       return;
     }
     display_.clearDisplay();
     display_.setTextColor(SSD1306_WHITE);
     display_.setCursor(0, 0);
-    display_.print("AirPulse");
-    display_.setCursor(68, 0);
-    if (wifiConnected) {
-      display_.printf("%d dBm", wifiRssi);
+    if (sensorOffline) {
+      display_.print("ERR: SENSOR OFF");
     } else {
-      display_.print("OFFLINE");
+      display_.print("AirPulse");
+      display_.setCursor(68, 0);
+      if (wifiConnected) {
+        display_.printf("%d dBm", wifiRssi);
+      } else {
+        display_.print("OFFLINE");
+      }
     }
     display_.drawFastHLine(0, 10, 128, SSD1306_WHITE);
 
