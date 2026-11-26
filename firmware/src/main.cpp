@@ -217,8 +217,6 @@ bool postTelemetry(const String& payload) {
 }
 
 void sendOrBufferTelemetry(const String& payload) {
-  const int wifiRssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -100;
-
   if (!storageReady) {
     Serial.println("[storage] Buffer unavailable; telemetry cannot be persisted");
     return;
