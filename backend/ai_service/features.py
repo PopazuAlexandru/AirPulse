@@ -18,6 +18,7 @@ FEATURE_NAMES = (
 
 EMA_WINDOW_SECONDS = 15 * 60
 HISTORY_RETENTION_SECONDS = 15 * 60
+ANOMALY_SCORE_EMA_ALPHA = 0.5
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class DeviceState:
     last_seen_at: float | None = None
     ema_temperature: float | None = None
     ema_humidity: float | None = None
+    ema_anomaly_score: float | None = None
     identical_samples: int = 0
     consecutive_high_scores: int = 0
 
@@ -119,6 +121,17 @@ class FeatureEngineer:
         else:
             state.consecutive_high_scores = 0
         return int(state.consecutive_high_scores >= 3)
+
+    def smooth_anomaly_score(self, serialno: str, score: float) -> float:
+        state = self.devices.setdefault(serialno, DeviceState())
+        if state.ema_anomaly_score is None:
+            state.ema_anomaly_score = score
+        else:
+            state.ema_anomaly_score = (
+                ANOMALY_SCORE_EMA_ALPHA * score
+                + (1.0 - ANOMALY_SCORE_EMA_ALPHA) * state.ema_anomaly_score
+            )
+        return state.ema_anomaly_score
 
     @staticmethod
     def _build_values(

@@ -18,6 +18,7 @@ from model import AnomalyModel
 
 ROOM_LABEL = "101"
 ANOMALY_THRESHOLD = 0.65
+CRITICAL_SPIKE_THRESHOLD = 0.80
 API_TOKEN = os.environ.get("API_TOKEN", "")
 
 anomaly_score_metric = Gauge(
@@ -149,8 +150,13 @@ async def ingest_telemetry(
             score = 1.0
             reason = feature_result.fault_reason
         else:
-            score = app.state.model.score(feature_result.values)
-            if score > ANOMALY_THRESHOLD:
+            raw_score = app.state.model.score(feature_result.values)
+            score = app.state.features.smooth_anomaly_score(
+                sample.serialno, raw_score
+            )
+            if score > CRITICAL_SPIKE_THRESHOLD:
+                reason = "critical_spike_candidate"
+            elif score > ANOMALY_THRESHOLD:
                 reason = "model_anomaly_candidate"
             else:
                 reason = "normal"
@@ -159,7 +165,11 @@ async def ingest_telemetry(
             sample.serialno, score, feature_result.fault_reason, ANOMALY_THRESHOLD
         )
         if feature_result.fault_reason is None and flag == 1:
-            reason = "model_anomaly_confirmed"
+            reason = (
+                "critical_spike_confirmed"
+                if score > CRITICAL_SPIKE_THRESHOLD
+                else "model_anomaly_confirmed"
+            )
 
         labels = {"room": ROOM_LABEL, "node": node}
         anomaly_score_metric.labels(**labels).set(score)
