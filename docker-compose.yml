@@ -31,6 +31,7 @@ services:
       - "9090:9090"
     volumes:
       - ./backend/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./backend/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     depends_on:
       ai-service:
