@@ -14,9 +14,12 @@ constexpr int I2C_SCL_PIN = 22;
 constexpr uint8_t SHT35_ADDRESS = 0x44;
 constexpr uint8_t OLED_ADDRESS = 0x3C;
 constexpr uint32_t ACQUISITION_INTERVAL_MS = 3000;
-constexpr uint32_t CO2_WARMUP_MS = 180000;
-constexpr uint32_t PM_WARMUP_MS = 30000;
+constexpr uint32_t DISPLAY_REFRESH_INTERVAL_MS = 3000;
 constexpr uint32_t CO2_RESPONSE_GRACE_MS = 250;
+constexpr uint32_t SENSOR_STALE_TIMEOUT_MS =
+    2 * ACQUISITION_INTERVAL_MS + 1000;
+constexpr uint32_t WIFI_CONFIG_PORTAL_TIMEOUT_MS = 180000;
+constexpr size_t TELEMETRY_QUEUE_LENGTH = 16;
 constexpr size_t OFFLINE_BUFFER_MAX_LINES = 500;
 constexpr size_t OFFLINE_FLUSH_BATCH_SIZE = 5;
 constexpr char SERIAL_NUMBER[] = "esp32:30pin_01";

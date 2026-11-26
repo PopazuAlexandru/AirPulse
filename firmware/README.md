@@ -34,6 +34,9 @@ unreadable/corrupt queue.
 MH-Z19C UART frames and PMS5003 32-byte frames are validated in the firmware.
 The SHT35 single-shot I2C readings use the sensor CRC. The custom partition
 table provides a 2 MiB application slot and 1.875 MiB LittleFS area (without
-an OTA application slot). Sensor warmup is non-blocking: CO2 data is accepted
-after three minutes and particulate data after 30 seconds; other sensors and
-the telemetry loop continue meanwhile.
+an OTA application slot). The first valid UART readings are displayed without
+blocking for sensor warmup; a sensor that stops producing valid readings for
+7 seconds is reported as `ERR: SENSOR OFF`, while the remaining sensors and
+telemetry continue running. Sampling and OLED refresh use `millis()` timers;
+HTTP delivery runs in a separate FreeRTOS task, and the WiFiManager portal is
+serviced non-blockingly so both can continue during provisioning.

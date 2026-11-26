@@ -19,9 +19,8 @@ struct SensorReadings {
 
 class MhZ19cDriver {
  public:
-  void begin(HardwareSerial& serial, uint32_t bootTimeMs) {
+  void begin(HardwareSerial& serial) {
     serial_ = &serial;
-    bootTimeMs_ = bootTimeMs;
     disableAbc();
   }
 
@@ -32,7 +31,7 @@ class MhZ19cDriver {
     }
   }
 
-  bool poll(uint32_t nowMs, uint16_t& ppm) {
+  bool poll(uint16_t& ppm) {
     if (serial_ == nullptr) {
       return false;
     }
@@ -46,7 +45,7 @@ class MhZ19cDriver {
       frame_[frameLength_++] = value;
       if (frameLength_ == sizeof(frame_)) {
         frameLength_ = 0;
-        if (isValidFrame() && nowMs - bootTimeMs_ >= AirPulseConfig::CO2_WARMUP_MS) {
+        if (isValidFrame()) {
           const uint16_t reading =
               (static_cast<uint16_t>(frame_[2]) << 8) | frame_[3];
           if (reading > 0) {
@@ -79,19 +78,17 @@ class MhZ19cDriver {
   }
 
   HardwareSerial* serial_ = nullptr;
-  uint32_t bootTimeMs_ = 0;
   uint8_t frame_[9] = {};
   size_t frameLength_ = 0;
 };
 
 class Pms5003Driver {
  public:
-  void begin(HardwareSerial& serial, uint32_t bootTimeMs) {
+  void begin(HardwareSerial& serial) {
     serial_ = &serial;
-    bootTimeMs_ = bootTimeMs;
   }
 
-  bool poll(uint32_t nowMs, uint16_t& pm1, uint16_t& pm25, uint16_t& pm10) {
+  bool poll(uint16_t& pm1, uint16_t& pm25, uint16_t& pm10) {
     if (serial_ == nullptr) {
       return false;
     }
@@ -109,7 +106,7 @@ class Pms5003Driver {
       frame_[frameLength_++] = value;
       if (frameLength_ == sizeof(frame_)) {
         frameLength_ = 0;
-        if (!isValidFrame() || nowMs - bootTimeMs_ < AirPulseConfig::PM_WARMUP_MS) {
+        if (!isValidFrame()) {
           continue;
         }
 
@@ -140,7 +137,6 @@ class Pms5003Driver {
   }
 
   HardwareSerial* serial_ = nullptr;
-  uint32_t bootTimeMs_ = 0;
   uint8_t frame_[32] = {};
   size_t frameLength_ = 0;
 };
