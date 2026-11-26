@@ -102,9 +102,10 @@ curl -X POST http://localhost:8000/telemetry \
   -d '{"wifi":-52,"rco2":850,"pm02":8,"pm10":12,"atmp":22.40,"rhum":45.10,"serialno":"esp32:30pin_01"}'
 ```
 
-The response contains `status`, `anomaly_score` in the range 0–1,
-`anomaly_flag`, and a reason. Three consecutive model scores above `0.65` are
-needed for a model anomaly flag; deterministic sensor faults flag immediately.
+The response contains `status`, an EMA-smoothed `anomaly_score` in the range
+0–1, `anomaly_flag`, and a reason. Three consecutive smoothed scores above
+`0.65` are needed for a model anomaly flag (`0.80` marks a critical spike);
+deterministic sensor faults flag immediately.
 Prometheus scrapes `/metrics` every three seconds, and Grafana provisions the
 AirPulse dashboard automatically.
 
@@ -121,7 +122,7 @@ Run focused service tests with:
 ```powershell
 $env:API_TOKEN = "set-this-to-the-API_TOKEN-value-from-.env"
 python -m pip install -r .\backend\ai_service\requirements-dev.txt
-python -m pytest .\backend\ai_service\tests
+python -m pytest .\backend\tests
 ```
 
 ## Model and service notes
@@ -131,3 +132,37 @@ sensor history are kept in process memory and reset when the service restarts.
 The Isolation Forest and its scaler are stored as `model.joblib` and
 `scaler.joblib` in the container's model directory. Rebuild the image to
 retrain them with `docker compose build --no-cache ai-service`.
+
+## Scrum Sprint 2 Deliverables & GitFlow
+
+- **US-01 — On-device real-time metrics:** the ESP32 samples sensors on a
+  `millis()` cadence, refreshes the 0.96" SSD1306 OLED (`0x3C`) every 3 seconds,
+  and displays CO2, PM2.5/PM10, temperature/humidity, AI status, and
+  `ERR: SENSOR OFF` when a sensor is disconnected. WiFiManager provisioning
+  and HTTP telemetry delivery run separately from the sampling/display loop.
+- **US-02 — Grafana dashboard and alerts:** the provisioned dashboard includes
+  time-series views, live CO2 and PM2.5 gauges, critical thresholds at
+  1,000 ppm and 35 µg/m³, and a `SENSOR DISCONNECTED / NO DATA` telemetry
+  state. Prometheus evaluates the provisioned threshold and missing-data
+  alert rules every 3 seconds.
+- **US-03 — AI anomaly detection:** the Python 3.11 FastAPI service uses an
+  Isolation Forest with CO2-rate, PM ratio, and 15-minute temperature/humidity
+  EMA-delta features. It applies EMA smoothing, immediately flags deterministic
+  sensor faults, and debounces model anomalies across three samples above
+  `0.65` (`0.80` is the critical-spike threshold). Tests live in
+  `backend/tests/test_ai_engine.py`.
+- **US-04 — Wireless provisioning:** WiFiManager opens the `AirPulse-Setup`
+  captive portal for 2.4 GHz Wi-Fi credentials, `ai_server_url`, and
+  `api_token` without blocking the sensor loop. Network and service settings
+  persist in NVS `Preferences`;
+  LittleFS buffers up to 500 records in `/buffer.jsonl`.
+- **Hardware standard:** 30-pin ESP32 Dev Board on a breadboard with MH-Z19C,
+  PMS5003, SHT35 (`0x44`), and 0.96" SSD1306 OLED (`0x3C`). The PMS5003 and
+  MH-Z19C use 1.25mm-to-2.54mm solderless adapters; UART1/UART2 and I2C
+  (`GPIO 21/22`) follow the wiring table above.
+- **GitFlow:** `main` contains release-ready increments; `develop` integrates
+  sprint work. User-story branches are
+  `feature/us-01-oled-display`, `feature/us-02-grafana-alerts`,
+  `feature/us-03-ai-anomaly-engine`, and `feature/us-04-wifimanager`.
+  Completed increments are merged into `develop`, then promoted to `main`
+  and tagged.
