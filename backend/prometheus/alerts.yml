@@ -1,0 +1,30 @@
+groups:
+  - name: airpulse-thresholds
+    interval: 3s
+    rules:
+      - alert: AirPulseCO2Critical
+        expr: airpulse_co2_ppm > 1000
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: AirPulse CO2 exceeds 1000 ppm
+          description: "CO2 is {{ $value }} ppm in room {{ $labels.room }}."
+
+      - alert: AirPulsePM25Critical
+        expr: airpulse_pm25_ugm3 > 35
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: AirPulse PM2.5 exceeds 35 µg/m³
+          description: "PM2.5 is {{ $value }} µg/m³ in room {{ $labels.room }}."
+
+      - alert: AirPulseTelemetryDisconnected
+        expr: up{job="ai-service"} == 0 or absent(up{job="ai-service"}) or absent_over_time(airpulse_co2_ppm{room="101"}[15s])
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: AirPulse telemetry disconnected
+          description: No AirPulse telemetry has arrived for at least 15 seconds.
