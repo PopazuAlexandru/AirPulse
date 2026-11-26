@@ -2,6 +2,9 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/portmacro.h>
+#include <freertos/queue.h>
 
 #include "Config.h"
 #include "DisplayUi.h"
@@ -13,6 +16,8 @@ using namespace AirPulseConfig;
 
 Preferences preferences;
 WiFiManager wifiManager;
+QueueHandle_t telemetryQueue = nullptr;
+portMUX_TYPE aiStatusMux = portMUX_INITIALIZER_UNLOCKED;
 WiFiManagerParameter* serverUrlParameter = nullptr;
 WiFiManagerParameter* apiTokenParameter = nullptr;
 char configuredServerUrl[192] = {};
@@ -32,11 +37,40 @@ uint32_t lastAcquisitionMs = 0;
 uint32_t lastDisplayMs = 0;
 uint32_t telemetryDueMs = 0;
 uint32_t co2ResponseDeadlineMs = 0;
+uint32_t lastCo2SampleMs = 0;
 uint32_t lastPmSampleMs = 0;
+uint32_t lastSht35SampleMs = 0;
 uint32_t lastPmWarningMs = 0;
+uint32_t wifiPortalStartedMs = 0;
 bool telemetryPending = false;
 bool co2ResponsePending = false;
 bool storageReady = false;
+bool telemetryWorkerReady = false;
+bool wifiPortalActive = false;
+bool co2SensorOffline = false;
+bool pmSensorOffline = false;
+bool sht35SensorOffline = false;
+
+struct TelemetryJob {
+  char payload[256];
+};
+
+AiStatus copyAiStatus() {
+  AiStatus snapshot;
+  portENTER_CRITICAL(&aiStatusMux);
+  snapshot = aiStatus;
+  portEXIT_CRITICAL(&aiStatusMux);
+  return snapshot;
+}
+
+void updateAiStatus(const AiStatus& updatedStatus) {
+  if (!updatedStatus.available) {
+    return;
+  }
+  portENTER_CRITICAL(&aiStatusMux);
+  aiStatus = updatedStatus;
+  portEXIT_CRITICAL(&aiStatusMux);
+}
 
 void persistNetworkParameters() {
   if (serverUrlParameter == nullptr || apiTokenParameter == nullptr) {
@@ -69,8 +103,10 @@ void provisionWifi() {
   loadNetworkParameters();
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  wifiManager.setConfigPortalTimeout(180);
+  wifiManager.setConfigPortalTimeout(
+      AirPulseConfig::WIFI_CONFIG_PORTAL_TIMEOUT_MS / 1000);
   wifiManager.setConnectTimeout(20);
+  wifiManager.setConfigPortalBlocking(false);
 
   serverUrlParameter = new WiFiManagerParameter(
       "ai_server_url", "AI server URL", configuredServerUrl,
@@ -84,7 +120,9 @@ void provisionWifi() {
 
   Serial.printf("[wifi] Starting provisioning AP: %s\n", WIFI_AP_NAME);
   if (!wifiManager.autoConnect(WIFI_AP_NAME)) {
-    Serial.println("[wifi] Provisioning timed out; continuing offline");
+    wifiPortalActive = true;
+    wifiPortalStartedMs = millis();
+    Serial.println("[wifi] Provisioning portal active; continuing offline");
   } else {
     Serial.printf("[wifi] Connected, IP=%s\n",
                   WiFi.localIP().toString().c_str());
@@ -96,21 +134,24 @@ void provisionWifi() {
 
 void pollSensors(uint32_t nowMs) {
   uint16_t co2Ppm = 0;
-  if (co2Sensor.poll(nowMs, co2Ppm)) {
+  if (co2Sensor.poll(co2Ppm)) {
     readings.co2Ppm = co2Ppm;
     readings.hasCo2 = true;
+    lastCo2SampleMs = nowMs;
+    co2SensorOffline = false;
     co2ResponsePending = false;
   }
 
   uint16_t pm1 = 0;
   uint16_t pm25 = 0;
   uint16_t pm10 = 0;
-  if (particulateSensor.poll(nowMs, pm1, pm25, pm10)) {
+  if (particulateSensor.poll(pm1, pm25, pm10)) {
     readings.pm1 = pm1;
     readings.pm25 = pm25;
     readings.pm10 = pm10;
     readings.hasParticulate = true;
     lastPmSampleMs = nowMs;
+    pmSensorOffline = false;
   }
 
   float temperatureC = 0.0F;
@@ -121,8 +162,26 @@ void pollSensors(uint32_t nowMs) {
     readings.temperatureC = temperatureC;
     readings.humidityPercent = humidityPercent;
     readings.hasTemperatureHumidity = true;
+    lastSht35SampleMs = nowMs;
+    sht35SensorOffline = false;
   } else if (shtConversionCompleted) {
+    sht35SensorOffline = true;
     Serial.println("[sensor] SHT35 conversion/read failed; retaining last valid sample");
+  }
+}
+
+void updateSensorHealth(uint32_t nowMs) {
+  co2SensorOffline =
+      !readings.hasCo2 ||
+      nowMs - lastCo2SampleMs >= SENSOR_STALE_TIMEOUT_MS;
+  pmSensorOffline =
+      !readings.hasParticulate ||
+      nowMs - lastPmSampleMs >= SENSOR_STALE_TIMEOUT_MS;
+  if (readings.hasTemperatureHumidity) {
+    sht35SensorOffline =
+        nowMs - lastSht35SampleMs >= SENSOR_STALE_TIMEOUT_MS;
+  } else if (nowMs - bootTimeMs >= SENSOR_STALE_TIMEOUT_MS) {
+    sht35SensorOffline = true;
   }
 }
 
@@ -131,10 +190,14 @@ void acquireSensors(uint32_t nowMs) {
   co2ResponsePending = true;
   co2ResponseDeadlineMs = nowMs + 1000;
   if (!temperatureHumiditySensor.request(nowMs)) {
+    sht35SensorOffline = true;
     Serial.println("[sensor] SHT35 read failed; retaining last valid sample");
   }
-  if (nowMs - bootTimeMs >= PM_WARMUP_MS &&
-      (!readings.hasParticulate || nowMs - lastPmSampleMs > 5000) &&
+  const bool particulateStale =
+      readings.hasParticulate
+          ? nowMs - lastPmSampleMs >= SENSOR_STALE_TIMEOUT_MS
+          : nowMs - bootTimeMs >= SENSOR_STALE_TIMEOUT_MS;
+  if (particulateStale &&
       nowMs - lastPmWarningMs >= 30000) {
     lastPmWarningMs = nowMs;
     Serial.println("[sensor] PMS5003 has not produced a valid frame recently");
@@ -144,9 +207,17 @@ void acquireSensors(uint32_t nowMs) {
   telemetryPending = true;
 }
 
-void sendOrBufferTelemetry() {
+bool postTelemetry(const String& payload) {
+  AiStatus responseStatus;
+  const bool accepted = telemetryClient.post(payload, responseStatus);
+  if (accepted) {
+    updateAiStatus(responseStatus);
+  }
+  return accepted;
+}
+
+void sendOrBufferTelemetry(const String& payload) {
   const int wifiRssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -100;
-  const String payload = telemetryClient.createPayload(wifiRssi, readings);
 
   if (!storageReady) {
     Serial.println("[storage] Buffer unavailable; telemetry cannot be persisted");
@@ -163,7 +234,7 @@ void sendOrBufferTelemetry() {
   while (flushed < OFFLINE_FLUSH_BATCH_SIZE && offlineBuffer.hasRecords()) {
     String bufferedPayload;
     if (!offlineBuffer.peekFirst(bufferedPayload) ||
-        !telemetryClient.post(bufferedPayload, aiStatus)) {
+        !postTelemetry(bufferedPayload)) {
       Serial.println("[telemetry] Buffer flush paused; preserving queued records");
       offlineBuffer.append(payload);
       return;
@@ -182,9 +253,36 @@ void sendOrBufferTelemetry() {
     return;
   }
 
-  if (!telemetryClient.post(payload, aiStatus)) {
+  if (!postTelemetry(payload)) {
     Serial.println("[telemetry] Live POST failed; buffering sample");
     offlineBuffer.append(payload);
+  }
+}
+
+void telemetryWorker(void*) {
+  TelemetryJob job;
+  for (;;) {
+    if (xQueueReceive(telemetryQueue, &job, portMAX_DELAY) == pdTRUE) {
+      sendOrBufferTelemetry(String(job.payload));
+    }
+  }
+}
+
+void enqueueTelemetry() {
+  if (!telemetryWorkerReady || telemetryQueue == nullptr) {
+    Serial.println("[telemetry] Worker unavailable; sample was not queued");
+    return;
+  }
+  const int wifiRssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -100;
+  const String payload = telemetryClient.createPayload(wifiRssi, readings);
+  TelemetryJob job = {};
+  if (strlcpy(job.payload, payload.c_str(), sizeof(job.payload)) >=
+      sizeof(job.payload)) {
+    Serial.println("[telemetry] Payload exceeds queue record capacity");
+    return;
+  }
+  if (xQueueSend(telemetryQueue, &job, 0) != pdTRUE) {
+    Serial.println("[telemetry] Queue full; sample was not queued");
   }
 }
 
@@ -195,21 +293,46 @@ void setup() {
 
   temperatureHumiditySensor.begin();
   displayUi.begin();
+  displayUi.render(readings, false, -100, aiStatus, false);
   storageReady = offlineBuffer.begin();
+  telemetryQueue = xQueueCreate(TELEMETRY_QUEUE_LENGTH, sizeof(TelemetryJob));
+  if (telemetryQueue == nullptr) {
+    Serial.println("[telemetry] Could not create telemetry queue");
+  }
 
   // Serial1 and Serial2 are the ESP32 Arduino core hardware UART instances.
   Serial2.begin(SENSOR_BAUD, SERIAL_8N1, CO2_RX_PIN, CO2_TX_PIN);
   Serial1.begin(SENSOR_BAUD, SERIAL_8N1, PM_RX_PIN, PM_TX_PIN);
-  co2Sensor.begin(Serial2, bootTimeMs);
-  particulateSensor.begin(Serial1, bootTimeMs);
-  Serial.println("[sensor] MH-Z19C ABC disabled; sensor warmup is non-blocking");
+  co2Sensor.begin(Serial2);
+  particulateSensor.begin(Serial1);
+  Serial.println("[sensor] Startup sampling is non-blocking");
 
   provisionWifi();
+  if (telemetryQueue != nullptr &&
+      xTaskCreatePinnedToCore(telemetryWorker, "telemetry", 8192, nullptr, 1,
+                              nullptr, 0) == pdPASS) {
+    telemetryWorkerReady = true;
+  } else {
+    Serial.println("[telemetry] Could not start telemetry worker");
+  }
   lastAcquisitionMs = millis() - ACQUISITION_INTERVAL_MS;
+  lastDisplayMs = millis() - DISPLAY_REFRESH_INTERVAL_MS;
 }
 
 void loop() {
   const uint32_t nowMs = millis();
+  if (wifiPortalActive) {
+    wifiManager.process();
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiPortalActive = false;
+      Serial.printf("[wifi] Connected, IP=%s\n",
+                    WiFi.localIP().toString().c_str());
+    } else if (nowMs - wifiPortalStartedMs >=
+               WIFI_CONFIG_PORTAL_TIMEOUT_MS) {
+      wifiPortalActive = false;
+      Serial.println("[wifi] Provisioning timed out; continuing offline");
+    }
+  }
   pollSensors(nowMs);
 
   if (nowMs - lastAcquisitionMs >= ACQUISITION_INTERVAL_MS) {
@@ -220,7 +343,8 @@ void loop() {
   if (co2ResponsePending &&
       static_cast<int32_t>(nowMs - co2ResponseDeadlineMs) >= 0) {
     co2ResponsePending = false;
-    if (nowMs - bootTimeMs >= CO2_WARMUP_MS) {
+    if (!readings.hasCo2 ||
+        nowMs - lastCo2SampleMs >= SENSOR_STALE_TIMEOUT_MS) {
       Serial.println("[sensor] MH-Z19C did not return a valid CO2 frame");
     }
   }
@@ -228,13 +352,15 @@ void loop() {
   if (telemetryPending &&
       static_cast<int32_t>(nowMs - telemetryDueMs) >= 0) {
     telemetryPending = false;
-    sendOrBufferTelemetry();
+    enqueueTelemetry();
   }
 
-  if (nowMs - lastDisplayMs >= 500) {
+  updateSensorHealth(nowMs);
+  if (nowMs - lastDisplayMs >= DISPLAY_REFRESH_INTERVAL_MS) {
     lastDisplayMs = nowMs;
     const bool connected = WiFi.status() == WL_CONNECTED;
     displayUi.render(readings, connected, connected ? WiFi.RSSI() : -100,
-                     aiStatus);
+                     copyAiStatus(), co2SensorOffline || pmSensorOffline ||
+                                         sht35SensorOffline);
   }
 }
